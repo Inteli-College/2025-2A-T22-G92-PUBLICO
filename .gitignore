@@ -1,0 +1,20 @@
+# Ambiente virtual
+venv/
+.venv
+
+# Configurações
+.env
+
+# Cache do Python
+__pycache__/
+
+# Dados temporários
+data/processed/
+data/raw/temp_pdfs
+src/api/uploads
+
+# Banco de dados
+qdrant_storage/
+
+# HuggingFace
+.cache/huggingface/
