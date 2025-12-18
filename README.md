@@ -69,7 +69,7 @@ O Bank of America é uma das principais instituições financeiras do mundo, ate
 
 ## 🔧 Instalação
 
-As informações completas sobre a instalação do projeto, incluindo um passo a passo detalhado, dependências e versões utilizadas, podem ser encontradas no arquivo "docs/Manuais de Utilização/manual_de_utilizacao - Sprint8.md". Você pode acessar o documento através do seguinte link: <a href="https://github.com/Inteli-College/2025-2A-T22-G92-INTERNO/blob/main/docs/Manuais%20de%20utiliza%C3%A7%C3%A3o/manual_de_utilizacao%20-%20Sprint%208.md" >manual de utilização</a>.
+As informações completas sobre a instalação do projeto, incluindo um passo a passo detalhado, dependências e versões utilizadas, podem ser encontradas no arquivo "docs/Manuais de Utilização/manual_de_utilizacao.md". Você pode acessar o documento através do seguinte link: <a href="https://github.com/Inteli-College/2025-2A-T22-G92-PUBLICO/blob/main/docs/Manuais%20de%20Utiliza%C3%A7%C3%A3o/manual_de_utilizacao.md" >manual de utilização</a>.
 
 O arquivo fornecerá todas as informações necessárias para realizar a instalação e configuração correta do projeto, garantindo que você tenha todas as dependências corretas e versões adequadas para o funcionamento adequado do sistema.
 
