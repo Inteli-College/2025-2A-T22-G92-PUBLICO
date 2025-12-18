@@ -5,7 +5,6 @@ import time
 import base64
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
-from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
@@ -112,17 +111,27 @@ def url_to_local_pdf(url, output_dir):
         pass # Continua para a renderização
         
     # Lógica de renderização HTML/Visualizador para PDF
-    if pdf_content is None:
+    if pdf_content is None:   
+        # Obter caminhos das variáveis de ambiente (definidas no Dockerfile)
+        chrome_bin = os.getenv("CHROME_BIN", "/usr/bin/chromium")
+        chromedriver_path = os.getenv("CHROME_DRIVER_PATH", "/usr/bin/chromedriver")
+        
+        print(f"[SCRAPER][CONFIG] Usando Chromium Bin: {chrome_bin}")
+        print(f"[SCRAPER][CONFIG] Usando ChromeDriver Path: {chromedriver_path}")
+             
         chrome_options = Options()
-        chrome_options.add_argument("--headless")
+        chrome_options.add_argument("--headless=new")
         chrome_options.add_argument("--no-sandbox")
         chrome_options.add_argument("--disable-dev-shm-usage")
+        chrome_options.add_argument("--disable-gpu")
         chrome_options.add_argument(f"user-agent={USER_AGENT_HEADER['User-Agent']}")
         
         driver = None
         try:
-            service = Service(ChromeDriverManager().install())
+            service = Service(executable_path=chromedriver_path)
+            print("[SCRAPER][RENDER] Iniciando ChromeDriver...")
             driver = webdriver.Chrome(service=service, options=chrome_options)
+            print(f"[SCRAPER][RENDER] Navegando para: {url}")
             driver.get(url)
             
             # Chama a função de renderização para obter os bytes do PDF
@@ -133,6 +142,7 @@ def url_to_local_pdf(url, output_dir):
             
         finally:
             if driver:
+                print("[SCRAPER][RENDER] Fechando ChromeDriver.")
                 driver.quit()
 
     # Salvamento local

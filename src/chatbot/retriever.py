@@ -1,93 +1,101 @@
-import numpy as np
-from sentence_transformers import SentenceTransformer
-from qdrant_client import QdrantClient
-from qdrant_client.http.models import VectorParams, Distance
+from ..core.embedder import Embedder
+from ..core.vectordb import VectorDB
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+from typing import List, Dict, Any
 
-# --- Embedder ---
-class Embedder:
-    def __init__(self, model_name="all-MiniLM-L6-v2"):
-        print("Inicializando Embedder...")
-        self.model = SentenceTransformer(model_name)
-        print("Embedder inicializado com sucesso.\n")
+def retrieve_relevant_chunks(query: str, embedder: Embedder, vectordb: VectorDB, user_role: str, top_k: int = 5):
+    """
+    Função orquestradora (Retriever) que recebe uma query e os serviços 
+    (embedder, vectordb), aplica os filtros de segurança e retorna os chunks relevantes.
+    """
     
-    def encode(self, text):
-        return self.model.encode(text)
-
-# --- VectorDB (Qdrant) ---
-class VectorDB:
-    def __init__(self, collection_name="documents", host="localhost", port=6333):
-        print("Inicializando VectorDB (Qdrant)...")
-        self.client = QdrantClient(host=host, port=port)
-        self.collection_name = collection_name
-        self._check_collection()
-        print(f"Conectado ao Qdrant na coleção '{collection_name}'.\n")
+    print(f"[RETRIEVER] --- Iniciando processo de busca (Cargo: {user_role}) ---")
+    print(f"[RETRIEVER] Consulta recebida: '{query}'")
+    print("[RETRIEVER] Gerando embedding da query...")
     
-    def _check_collection(self):
-        # Verifica se a coleção existe
-        if self.collection_name not in [c.name for c in self.client.get_collections().collections]:
-            print("Coleção não encontrada. Criando nova coleção...")
-            self.client.recreate_collection(
-                collection_name=self.collection_name,
-                vectors_config=VectorParams(size=384, distance=Distance.COSINE)
-            )
-    
-    def search(self, query_vector, top_k=5):
-        # Busca pontos mais similares
-        hits = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query_vector,
-            limit=top_k
-        )
-        results = []
-        for h in hits:
-            # Detecta automaticamente o campo de texto do payload
-            if "chunk" in h.payload:
-                chunk_text = h.payload["chunk"]
-            elif "text" in h.payload:
-                chunk_text = h.payload["text"]
-            else:
-                # Pega qualquer campo de string disponível
-                chunk_text = next((v for v in h.payload.values() if isinstance(v, str)), "")
-            
-            results.append({
-                "id": h.id,
-                "score": h.score,
-                "chunk": chunk_text,
-                "source": h.payload.get("source", "")
-            })
-        return results
-
-# --- Função principal do retriever ---
-def retrieve(query, top_k=5):
-    print("--- Iniciando processo de busca ---")
-    print(f"Consulta recebida: '{query}'")
-
-    embedder = Embedder()
-    vectordb = VectorDB()
-
-    print("Gerando embedding da query...")
-    query_embedding = embedder.encode(query)
-    print(f"Embedding gerado (mostrando primeiros 5 valores): {query_embedding[:5]}\n")
-
-    print(f"Buscando top {top_k} resultados no Qdrant...")
     try:
-        top_results = vectordb.search(query_embedding, top_k=top_k)
+        query_embedding = embedder.embed([query])[0].tolist()
+    except Exception as e:
+        print(f"[ERRO RETRIEVER] Falha ao gerar embedding. Verifique se o método 'embed' existe: {e}")
+        raise RuntimeError(f"Falha ao gerar embedding: {e}")
+
+    security_filter = Filter(
+        must=[
+            FieldCondition(
+                key="allowed_roles",
+                match=MatchValue(value=user_role) 
+            )
+        ]
+    )
+
+    print(f"[RETRIEVER] Buscando top {top_k} resultados no Qdrant...")
+    try:
+        top_results = vectordb.search(
+            query_embedding,
+            top_k=top_k,
+            query_filter=security_filter,
+        )
     except Exception as e:
         raise RuntimeError(f"Erro ao buscar no Qdrant: {e}")
 
-    print(f"{len(top_results)} resultados encontrados.\n")
-    print("Top resultados:")
-    for r in top_results:
-        print({
-            "id": r["id"],
-            "score": r["score"],
-            "chunk": r["chunk"],
-            "source": r["source"]
-        })
+    if not top_results:
+        raise ValueError("Nenhum documento relevante foi encontrado com base na sua consulta e permissões de acesso.")
     
-    return top_results
+    print(f"[RETRIEVER] {len(top_results)} resultados encontrados.\n")
 
-# --- Execução direta para teste ---
-if __name__ == "__main__":
-    query = input("Digite sua query: ")
-    retrieve(query, top_k=5)
+    # Recuperação Expandida (Retrieval Expansion)
+    # Esta lista será o conjunto de chunks que terão o contexto expandido.
+    chunks_a_expandir = top_results[:2] # Pega o Chunk Top 1 e o Chunk Top 2
+    
+    # Usa um dicionário para garantir que todos os chunks (principais + vizinhos) sejam únicos
+    final_context_map = {hit['id']: hit for hit in chunks_a_expandir}
+    
+    # Lista de chunks que têm metadados suficientes para expansão
+    chunks_to_expand = [
+        hit for hit in chunks_a_expandir 
+        if 'chunk_index' in hit and 'source' in hit and hit.get('chunk_index') is not None
+    ]
+
+    print(f"[RETRIEVER] Iniciando Expansão de Contexto para {len(chunks_to_expand)} chunks...")
+    
+    for hit in chunks_to_expand:
+        source = hit.get('source')
+        
+        try:
+            chunk_index = int(hit.get('chunk_index'))
+        except (TypeError, ValueError):
+            print(f"Aviso: chunk_index inválido no chunk ID {hit['id']}. Pulando expansão.")
+            continue
+            
+        neighbor_indices = []
+        
+        # Vizinho anterior: index - 1. (O índice começa em 1, então o mínimo é 1)
+        if chunk_index > 1:
+            neighbor_indices.append(chunk_index - 1)
+        
+        # Vizinho posterior: index + 1
+        neighbor_indices.append(chunk_index + 1)
+        
+        # Busca e adiciona os vizinhos
+        for neighbor_index in neighbor_indices:
+            neighbor_hits = vectordb.get_chunks_by_metadata(
+                source=source, 
+                chunk_index=neighbor_index,
+                user_role=user_role # Filtro de segurança obrigatório
+            )
+            
+            # Adiciona os vizinhos ao mapa (final_context_map)
+            for neighbor in neighbor_hits:
+                if neighbor['id'] not in final_context_map:
+                    final_context_map[neighbor['id']] = neighbor
+                    print(f"[RETRIEVER] -> Adicionado chunk vizinho (Index {neighbor_index}) do documento {source}.")
+
+    # Retorna a lista final de chunks (principais + vizinhos)
+    final_context_list = list(final_context_map.values())
+    
+    # Ordenar o contexto final por documento (source) e índice (index) para passar para o LLM
+    final_context_list.sort(key=lambda x: (x.get('source', ''), x.get('chunk_index', 9999)))
+    
+    print(f"\nBusca concluída. {len(final_context_list)} chunks no contexto final (principais + vizinhos).\n")
+    
+    return final_context_list

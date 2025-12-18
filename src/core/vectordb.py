@@ -1,10 +1,14 @@
 import os
 from qdrant_client import QdrantClient
+from typing import List, Dict, Any
 from qdrant_client.models import (
     VectorParams,
     PointStruct,
     Distance,
-    PayloadSchemaType
+    PayloadSchemaType,
+    Filter,
+    FieldCondition,
+    MatchValue,
 )
 
 class VectorDB:
@@ -84,16 +88,89 @@ class VectorDB:
         )
         print(f"{len(points)} documentos adicionados à coleção '{self.collection_name}'.")
 
-    def search(self, query_vector, top_k=5):
+    def search(self, query_vector, top_k=5, query_filter: Filter = None):
         """
-        Executa uma busca vetorial no Qdrant.
+        Executa uma busca vetorial no Qdrant, aplicando um filtro de acordo com permissão de acesso.
         
         query_vector: embedding de consulta (lista ou array)
         top_k: número de resultados a retornar
+        query_filter: (Opcional) Objeto de Filtro do Qdrant para segurança/metadados.
         """
-        results = self.client.search(
+        # Busca pontos mais similares
+        hits = self.client.search(
             collection_name=self.collection_name,
             query_vector=query_vector,
-            limit=top_k
+            query_filter=query_filter,
+            limit=top_k,
+            with_payload=True,
         )
+        results = []
+        for h in hits:
+            # Detecta automaticamente o campo de texto do payload
+            if "chunk" in h.payload:
+                chunk_text = h.payload["chunk"]
+            elif "text" in h.payload:
+                chunk_text = h.payload["text"]
+            else:
+                # Pega qualquer campo de string disponível
+                chunk_text = next((v for v in h.payload.values() if isinstance(v, str)), "")
+            
+            results.append({
+                "id": h.id,
+                "score": h.score,
+                "chunk": chunk_text,
+                "source": h.payload.get("source", ""),
+                "chunk_index": h.payload.get("chunk_index"),
+                "last_updated": h.payload.get("last_updated"),
+                "file_in_storage": h.payload.get("file_in_storage"), 
+                "display_name": h.payload.get("display_name"),
+            })
         return results
+
+    def get_chunks_by_metadata(self, source: str, chunk_index: int, user_role: str) -> List[Dict[str, Any]]:
+                """
+                Busca chunks específicos na coleção usando os campos 'source' e 'chunk_index' no payload,
+                aplicando também o filtro de segurança (user_role). Importante para retornar chunks
+                vizinhos e dar mais contexto para o chunk escolhido e, assim, para o LLM.
+                """
+                # Constrói o filtro de metadados (Source, Index, e Segurança)
+                metadata_filter = Filter(
+                    must=[
+                        FieldCondition(key="allowed_roles", match=MatchValue(value=user_role)),
+                        FieldCondition(key="source", match=MatchValue(value=source)),
+                        FieldCondition(key="chunk_index", match=MatchValue(value=chunk_index)),
+                    ]
+                )
+                
+                # Executa a busca. Como o Qdrant exige um vetor de busca (query_vector), deve-se usar um vetor dummy (composto apenas por 1.0) para que a busca seja guiada apenas pelo filtro.
+                dummy_vector = [0.0] * self.vector_size 
+
+                hits = self.client.search(
+                    collection_name=self.collection_name,
+                    query_vector=dummy_vector, 
+                    query_filter=metadata_filter,
+                    limit=1, # apenas o chunk exato
+                    with_payload=True, 
+                )
+                
+                results = []
+                for h in hits:
+                    if "chunk" in h.payload:
+                        chunk_text = h.payload["chunk"]
+                    elif "text" in h.payload:
+                        chunk_text = h.payload["text"]
+                    else:
+                        chunk_text = next((v for v in h.payload.values() if isinstance(v, str)), "")
+                        
+                    results.append({
+                        "id": h.id,
+                        "score": h.score, 
+                        "chunk": chunk_text,
+                        "source": h.payload.get("source", ""),
+                        "chunk_index": h.payload.get("chunk_index"),
+                        "last_updated": h.payload.get("last_updated"),
+                        "file_in_storage": h.payload.get("file_in_storage"), 
+                        "display_name": h.payload.get("display_name"),
+                    })
+                    
+                return results

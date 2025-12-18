@@ -1,1 +1,0 @@
-# Responsável por testar a funcionalidade do módulo de web scrapping
